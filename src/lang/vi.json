@@ -1,0 +1,23 @@
+{
+    "zModelsCustom.prefix": " {darkred}[ {green}zModels {darkred}] {default}",
+    "zModelsCustom.console_only": "Lệnh này chỉ có thể sử dụng từ console.",
+    "zModelsCustom.reload_success": "Đã tải lại: {0} categories ({1} models), {2} loại vũ khí ({3} skins)",
+    "zModelsCustom.reload_success_player": "Đã tải lại: {0} categories với {1} models",
+    "zModelsCustom.reload_error": "{darkred}Lỗi tải lại: {default}{0}",
+    "zModelsCustom.web_model_applied_site": "{green}Đã áp dụng model {yellow}{0}{green} cho {yellow}{1}",
+    "zModelsCustom.web_model_saved_site": "{green}Đã lưu model {yellow}{0}{green} cho {yellow}{1}{green}. Sẽ áp dụng khi spawn.",
+    "zModelsCustom.web_model_removed_all": "{green}Đã xóa tất cả model tùy chỉnh.",
+    "zModelsCustom.web_model_removed_team": "{green}Đã xóa model {yellow}{0}{green}.",
+    "zModelsCustom.web_weapon_applied": "{green}Đã áp dụng skin vũ khí {yellow}{0}{green} cho {yellow}{1}",
+    "zModelsCustom.web_weapon_saved": "{green}Đã lưu skin vũ khí {yellow}{0}{green} cho {yellow}{1}{green}. Sẽ áp dụng khi equip.",
+    "zModelsCustom.web_weapon_removed_all": "{green}Đã xóa tất cả skin vũ khí tùy chỉnh.",
+    "zModelsCustom.web_weapon_removed": "{green}Đã xóa skin {yellow}{0}{green}.",
+    "zModelsCustom.web_login_success": "{green}Đăng nhập thành công qua web!",
+    "zModelsCustom.web_login_time": " {gray}Thời gian: {yellow}{0}",
+    "zModelsCustom.web_login_location": " {gray}Vị trí: {yellow}{0}, {1}",
+    "zModelsCustom.web_login_domain": " {gray}Tên miền: {yellow}{0}",
+    "zModelsCustom.website_message": "{green}Truy cập website: {yellow}{0}",
+    "zModelsCustom.cooldown_remaining": "{darkred}Vui lòng đợi {yellow}{0}{darkred} giây trước khi reload.",
+    "zModelsCustom.kick_reason_spam": "Spam lệnh",
+    "zModelsCustom.console_kick_spam": "Player {0} (SteamID: {1}) bị kick vì spam lệnh"
+}

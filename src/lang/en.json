@@ -1,0 +1,27 @@
+{
+  "zModelsCustom.prefix": " {darkred}[ {green}zModels {darkred}] {default}",
+  "zModelsCustom.console_only": "This command can only be used from console.",
+  "zModelsCustom.reload_success": "Reloaded: {0} player categories ({1} models), {2} weapon types ({3} skins)",
+  "zModelsCustom.reload_success_player": "Reloaded: {0} categories with {1} models",
+  "zModelsCustom.reload_error": "{darkred}Error reloading: {default}{0}",
+  
+  "zModelsCustom.web_model_applied_site": "{green}Applied model {yellow}{0}{green} for {yellow}{1}",
+  "zModelsCustom.web_model_saved_site": "{green}Saved model {yellow}{0}{green} for {yellow}{1}{green}. Will apply on next spawn.",
+  "zModelsCustom.web_model_removed_all": "{green}Removed all custom models.",
+  "zModelsCustom.web_model_removed_team": "{green}Removed {yellow}{0}{green} team custom model.",
+  
+  "zModelsCustom.web_weapon_applied": "{green}Applied weapon skin {yellow}{0}{green} for {yellow}{1}",
+  "zModelsCustom.web_weapon_saved": "{green}Saved weapon skin {yellow}{0}{green} for {yellow}{1}{green}. Will apply on next equip.",
+  "zModelsCustom.web_weapon_removed_all": "{green}Removed all custom weapon skins.",
+  "zModelsCustom.web_weapon_removed": "{green}Removed {yellow}{0}{green} custom weapon skin.",
+  
+  "zModelsCustom.web_login_success": "{green}Successfully logged in via web!",
+  "zModelsCustom.web_login_time": " {gray}Time: {yellow}{0}",
+  "zModelsCustom.web_login_location": " {gray}Location: {yellow}{0}, {1}",
+  "zModelsCustom.web_login_domain": " {gray}Domain: {yellow}{0}",
+  
+  "zModelsCustom.website_message": "{green}Visit our website: {yellow}{0}",
+  "zModelsCustom.cooldown_remaining": "{darkred}Please wait {yellow}{0}{darkred} seconds before reloading again.",
+  "zModelsCustom.kick_reason_spam": "Command spam detected",
+  "zModelsCustom.console_kick_spam": "Player {0} (SteamID: {1}) was kicked for command spam"
+}
