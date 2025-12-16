@@ -18,12 +18,34 @@ public partial class Config
     public static Config Load(string moduleDirectory)
     {
         var path = GetConfigPath(moduleDirectory);
+        var configDir = Path.GetDirectoryName(path)!;
 
-        if (!File.Exists(path))
+        // Ensure directory exists
+        Directory.CreateDirectory(configDir);
+
+        var config = File.Exists(path)
+            ? LoadExistingConfig(path)
+            : CreateDefaultConfig(path);
+
+        // Ensure player models config exists
+        var modelsPath = Path.Combine(configDir, "zModels.json");
+        if (!File.Exists(modelsPath))
         {
-            return CreateDefaultConfig(path);
+            PlayerModelsConfig.CreateDefault(modelsPath);
         }
 
+        // Ensure weapon models config exists
+        var weaponsPath = Path.Combine(configDir, "zWeapons.json");
+        if (!File.Exists(weaponsPath))
+        {
+            WeaponModelsConfig.CreateDefault(weaponsPath);
+        }
+
+        return config;
+    }
+
+    private static Config LoadExistingConfig(string path)
+    {
         try
         {
             var json = File.ReadAllText(path);
@@ -131,10 +153,7 @@ public partial class PlayerModelsConfig
                         UniqueId = "example_model",
                         Model = "models/player/example.mdl",
                         Slot = "ALL",
-                        DisableLeg = false,
-                        MenuFlags = "@css/vip",
-                        InspectFlags = "",
-                        DisableInspect = false
+                        DisableLeg = false
                     }
                 }
             }
@@ -152,6 +171,11 @@ public partial class PlayerModelsConfig
         }
 
         return defaultModels;
+    }
+
+    public static void CreateDefault(string path)
+    {
+        CreateDefaultModels(path);
     }
 
     public PlayerModelData? FindModelByUniqueId(string uniqueId)
@@ -197,15 +221,6 @@ public class PlayerModelData
 
     [JsonPropertyName("disable_leg")]
     public bool DisableLeg { get; set; }
-
-    [JsonPropertyName("menu_flags")]
-    public string MenuFlags { get; set; } = "";
-
-    [JsonPropertyName("inspect_flags")]
-    public string InspectFlags { get; set; } = "";
-
-    [JsonPropertyName("disable_inspect")]
-    public bool DisableInspect { get; set; }
 }
 
 // Weapon Models Config (zWeapons.json)
@@ -280,6 +295,11 @@ public partial class WeaponModelsConfig
         }
 
         return defaultModels;
+    }
+
+    public static void CreateDefault(string path)
+    {
+        CreateDefaultModels(path);
     }
 
     public WeaponModelData? FindModelByUniqueId(string uniqueId)
