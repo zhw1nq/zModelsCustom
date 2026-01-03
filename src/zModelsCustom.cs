@@ -2,6 +2,7 @@ using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Modules.Utils;
+using CounterStrikeSharp.API.Modules.Admin;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -18,6 +19,8 @@ public class zModelsCustom : BasePlugin
     public static Database Database { get; private set; } = null!;
     public static ModelManager ModelManager { get; private set; } = null!;
     public static WeaponManager WeaponManager { get; private set; } = null!;
+    public static SmokeManager SmokeManager { get; private set; } = null!;
+    public static EffectsManager EffectsManager { get; private set; } = null!;
 
     private readonly ConcurrentDictionary<ulong, ReloadInfo> _reloadTracking = new();
 
@@ -28,17 +31,24 @@ public class zModelsCustom : BasePlugin
         Database = new Database(Config.DatabaseConfig);
         ModelManager = new ModelManager();
         WeaponManager = new WeaponManager();
+        SmokeManager = new SmokeManager();
+        EffectsManager = new EffectsManager();
+        EffectsManager.Initialize(ModuleDirectory);
 
         // Player model events
         RegisterEventHandler<EventPlayerSpawn>(ModelManager.OnPlayerSpawn);
         
         // Weapon events
-        RegisterListener<Listeners.OnEntityCreated>(WeaponManager.OnEntityCreated);
+        RegisterListener<Listeners.OnEntityCreated>(OnEntityCreated);
         RegisterEventHandler<EventItemEquip>(WeaponManager.OnItemEquip);
         
         // Common events
         RegisterEventHandler<EventPlayerConnectFull>(Database.OnPlayerConnectFull);
         RegisterEventHandler<EventPlayerDisconnect>(OnPlayerDisconnect);
+        
+        // Effects events (Trail/Tracer)
+        RegisterListener<Listeners.OnTick>(EffectsManager.OnGameFrame);
+        RegisterEventHandler<EventBulletImpact>(EffectsManager.OnBulletImpact);
 
         RegisterCommands();
 
@@ -65,6 +75,7 @@ public class zModelsCustom : BasePlugin
         AddCommand("css_webquery", "Apply model/weapon to player via web (Console only)", Command_WebQuery);
         AddCommand("css_weblogin", "Display web login notification (Console only)", Command_WebLogin);
         AddCommand("css_webdelete", "Remove player model/weapon via web (Console only)", Command_WebDelete);
+        AddCommand("css_webreload", "Reload config and refresh all players (Console only)", Command_WebReload);
 
         // Website commands
         var websiteCommands = new[] { "svip", "vip", "md", "mds" };
@@ -74,10 +85,12 @@ public class zModelsCustom : BasePlugin
         }
     }
 
+    [RequiresPermissions("@css/root")]
     private void Command_ReloadModels(CCSPlayerController? player, CommandInfo info)
     {
         try
         {
+            // Reload configs
             var newPlayerModels = PlayerModelsConfig.Load(ModuleDirectory);
             var newWeaponModels = WeaponModelsConfig.Load(ModuleDirectory);
             
@@ -88,7 +101,26 @@ public class zModelsCustom : BasePlugin
             var playerCategoriesCount = newPlayerModels.Categories.Count;
             var playerTotalModels = newPlayerModels.Categories.Values.Sum(c => c.Count);
             var weaponCount = newWeaponModels.Weapons.Count;
-            var weaponTotalModels = newWeaponModels.Weapons.Values.Sum(w => w.Count);
+            var weaponTotalModels = newWeaponModels.GetTotalSkinsCount();
+
+            Server.PrintToConsole($"[zModelsCustom] Reloaded: {playerCategoriesCount} player categories ({playerTotalModels} models), {weaponCount} collections ({weaponTotalModels} skins)");
+
+            // Refresh all connected players with their DB skins
+            var players = Utilities.GetPlayers().Where(p => p?.IsBot == false && p.IsValid).ToList();
+            int refreshedCount = 0;
+
+            foreach (var targetPlayer in players)
+            {
+                try
+                {
+                    WeaponManager.RefreshPlayerWeapons(targetPlayer);
+                    refreshedCount++;
+                }
+                catch (Exception ex)
+                {
+                    Server.PrintToConsole($"[zModelsCustom] Error refreshing {targetPlayer.PlayerName}: {ex.Message}");
+                }
+            }
 
             var successMessage = Localizer["zModelsCustom.reload_success", 
                 playerCategoriesCount, playerTotalModels, weaponCount, weaponTotalModels];
@@ -96,9 +128,10 @@ public class zModelsCustom : BasePlugin
             if (player?.IsValid == true)
             {
                 player.PrintToChat(Localizer["zModelsCustom.prefix"] + successMessage);
+                player.PrintToChat(Localizer["zModelsCustom.prefix"] + $" Refreshed {refreshedCount} players");
             }
 
-            Server.PrintToConsole($"[zModelsCustom] Reloaded: {playerCategoriesCount} player categories ({playerTotalModels} models), {weaponCount} weapon types ({weaponTotalModels} skins)");
+            Server.PrintToConsole($"[zModelsCustom] Refreshed {refreshedCount} players with their DB skins");
         }
         catch (Exception ex)
         {
@@ -127,19 +160,19 @@ public class zModelsCustom : BasePlugin
             return;
         }
 
-        if (info.ArgCount < 5)
+        if (info.ArgCount < 4)
         {
-            Server.PrintToConsole("[zModelsCustom] Usage: css_webquery <type> <steamid> <uniqueid> <site/weapon>");
-            Server.PrintToConsole("[zModelsCustom] Type: 'model' or 'weapon'");
-            Server.PrintToConsole("[zModelsCustom] For model: site can be 't', 'ct', or 'all'");
-            Server.PrintToConsole("[zModelsCustom] For weapon: weapon name like 'weapon_ak47' or 'all'");
+            Server.PrintToConsole("[zModelsCustom] Usage: css_webquery <type> <steamid> <uniqueid> [target]");
+            Server.PrintToConsole("[zModelsCustom] Type: 'model', 'weapon', or 'smoke'");
+            Server.PrintToConsole("[zModelsCustom] For model: target can be 't', 'ct', or 'all'");
+            Server.PrintToConsole("[zModelsCustom] For weapon/smoke: target is optional");
             return;
         }
 
         var type = info.GetArg(1).ToLowerInvariant();
         var steamIdStr = info.GetArg(2);
         var uniqueId = info.GetArg(3);
-        var target = info.GetArg(4).ToLowerInvariant();
+        var target = info.ArgCount >= 5 ? info.GetArg(4).ToLowerInvariant() : "";
 
         if (!ulong.TryParse(steamIdStr, out var steamId))
         {
@@ -159,11 +192,23 @@ public class zModelsCustom : BasePlugin
                 break;
 
             case "weapon":
-                _ = ProcessWeaponWebQuery(steamId, uniqueId, target);
+                _ = ProcessWeaponWebQuery(steamId, uniqueId);
+                break;
+
+            case "smoke":
+                _ = ProcessSmokeWebQuery(steamId, uniqueId);
+                break;
+
+            case "trail":
+                _ = ProcessTrailWebQuery(steamId, uniqueId);
+                break;
+
+            case "tracer":
+                _ = ProcessTracerWebQuery(steamId, uniqueId);
                 break;
 
             default:
-                Server.PrintToConsole($"[zModelsCustom] Invalid type: {type}. Must be 'model' or 'weapon'");
+                Server.PrintToConsole($"[zModelsCustom] Invalid type: {type}. Must be 'model', 'weapon', 'smoke', 'trail', or 'tracer'");
                 break;
         }
     }
@@ -239,7 +284,7 @@ public class zModelsCustom : BasePlugin
         }
     }
 
-    private async Task ProcessWeaponWebQuery(ulong steamId, string uniqueId, string weapon)
+    private async Task ProcessWeaponWebQuery(ulong steamId, string uniqueId)
     {
         try
         {
@@ -263,27 +308,27 @@ public class zModelsCustom : BasePlugin
                 return;
             }
 
-            List<string> weaponsToApply = new();
+            // Get the weapon type from the model's WeaponType property
+            string weaponTypeToApply = model.WeaponType;
 
-            if (weapon == "all")
+            if (string.IsNullOrEmpty(weaponTypeToApply))
             {
-                weaponsToApply.AddRange(modelsConfig.Weapons.Keys);
-            }
-            else
-            {
-                weaponsToApply.Add(weapon);
+                Server.NextFrame(() =>
+                    Server.PrintToConsole($"[zModelsCustom] Weapon model '{uniqueId}' has no weapon type defined"));
+                return;
             }
 
-            foreach (var weaponName in weaponsToApply)
-            {
-                await Database.SavePlayerWeaponAsync(steamId, weaponName, uniqueId);
-            }
+            // Save the weapon skin to database
+            await Database.SavePlayerWeaponAsync(steamId, weaponTypeToApply, uniqueId);
+
+            // Update cache
+            WeaponManager.UpdatePlayerWeaponCache(steamId, weaponTypeToApply, uniqueId);
 
             Server.NextFrame(() =>
             {
                 var prefix = Localizer["zModelsCustom.prefix"];
                 var modelName = modelsConfig.GetModelNameByUniqueId(uniqueId);
-                var weaponDisplay = weapon.ToUpperInvariant().Replace("WEAPON_", "");
+                var weaponDisplay = weaponTypeToApply.ToUpperInvariant().Replace("WEAPON_", "");
 
                 if (targetPlayer.IsValid && targetPlayer.PlayerPawn.Value != null)
                 {
@@ -303,6 +348,112 @@ public class zModelsCustom : BasePlugin
             Server.NextFrame(() =>
                 Server.PrintToConsole($"[zModelsCustom] Error in weapon webquery: {ex.Message}"));
         }
+    }
+
+    private async Task ProcessSmokeWebQuery(ulong steamId, string color)
+    {
+        try
+        {
+            var targetPlayer = Utilities.GetPlayers()
+                .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+            if (targetPlayer == null)
+            {
+                Server.NextFrame(() =>
+                    Server.PrintToConsole($"[zModelsCustom] Player with SteamID {steamId} not found or not connected"));
+                return;
+            }
+
+            // Save to database and update cache
+            await Database.SavePlayerSmokeColorAsync(steamId, color);
+            SmokeManager.SetPlayerSmokeColor(steamId, color);
+
+            Server.NextFrame(() =>
+            {
+                var prefix = Localizer["zModelsCustom.prefix"];
+                var colorDisplay = color == "random" ? "Rainbow" : color;
+
+                targetPlayer.PrintToChat($" {prefix} {Localizer["zModelsCustom.web_smoke_applied", colorDisplay]}");
+                Server.PrintToConsole($"[zModelsCustom] Applied smoke color '{color}' to player {steamId} ({targetPlayer.PlayerName})");
+            });
+        }
+        catch (Exception ex)
+        {
+            Server.NextFrame(() =>
+                Server.PrintToConsole($"[zModelsCustom] Error in smoke webquery: {ex.Message}"));
+        }
+    }
+
+    private async Task ProcessTrailWebQuery(ulong steamId, string uniqueId)
+    {
+        try
+        {
+            var targetPlayer = Utilities.GetPlayers()
+                .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+            if (targetPlayer == null)
+            {
+                Server.NextFrame(() =>
+                    Server.PrintToConsole($"[zModelsCustom] Player with SteamID {steamId} not found"));
+                return;
+            }
+
+            await Database.SavePlayerTrailAsync(steamId, uniqueId);
+            EffectsManager.SetPlayerTrail(steamId, uniqueId);
+
+            Server.NextFrame(() =>
+            {
+                var prefix = Localizer["zModelsCustom.prefix"];
+                targetPlayer.PrintToChat($" {prefix} Trail applied: {uniqueId}");
+                Server.PrintToConsole($"[zModelsCustom] Applied trail '{uniqueId}' to player {steamId}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Server.NextFrame(() =>
+                Server.PrintToConsole($"[zModelsCustom] Error in trail webquery: {ex.Message}"));
+        }
+    }
+
+    private async Task ProcessTracerWebQuery(ulong steamId, string uniqueId)
+    {
+        try
+        {
+            var targetPlayer = Utilities.GetPlayers()
+                .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+            if (targetPlayer == null)
+            {
+                Server.NextFrame(() =>
+                    Server.PrintToConsole($"[zModelsCustom] Player with SteamID {steamId} not found"));
+                return;
+            }
+
+            await Database.SavePlayerTracerAsync(steamId, uniqueId);
+            EffectsManager.SetPlayerTracer(steamId, uniqueId);
+
+            Server.NextFrame(() =>
+            {
+                var prefix = Localizer["zModelsCustom.prefix"];
+                targetPlayer.PrintToChat($" {prefix} Tracer applied: {uniqueId}");
+                Server.PrintToConsole($"[zModelsCustom] Applied tracer '{uniqueId}' to player {steamId}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Server.NextFrame(() =>
+                Server.PrintToConsole($"[zModelsCustom] Error in tracer webquery: {ex.Message}"));
+        }
+    }
+
+    // Central entity created handler - routes to appropriate managers
+    private void OnEntityCreated(CEntityInstance entity)
+    {
+        // Route to WeaponManager for weapon entities
+        WeaponManager.OnEntityCreated(entity);
+        
+        // Route to SmokeManager for smoke grenades
+        SmokeManager.OnEntityCreated(entity);
     }
 
     private void Command_WebLogin(CCSPlayerController? player, CommandInfo info)
@@ -376,7 +527,6 @@ public class zModelsCustom : BasePlugin
             targetPlayer.PrintToChat($" {prefix} {Localizer["zModelsCustom.web_login_success"]}");
             targetPlayer.PrintToChat($" {Localizer["zModelsCustom.web_login_time", info.Time]}");
             targetPlayer.PrintToChat($" {Localizer["zModelsCustom.web_login_location", info.Country, info.City]}");
-            targetPlayer.PrintToChat($" {Localizer["zModelsCustom.web_login_domain", info.Domain]}");
 
             Server.PrintToConsole($"[zModelsCustom] Web login notification sent to {targetPlayer.PlayerName} (SteamID: {steamId})");
         }
@@ -436,8 +586,20 @@ public class zModelsCustom : BasePlugin
                 _ = ProcessWeaponWebDelete(steamId, target);
                 break;
 
+            case "smoke":
+                _ = ProcessSmokeWebDelete(steamId);
+                break;
+
+            case "trail":
+                _ = ProcessTrailWebDelete(steamId);
+                break;
+
+            case "tracer":
+                _ = ProcessTracerWebDelete(steamId);
+                break;
+
             default:
-                Server.PrintToConsole($"[zModelsCustom] Invalid type: {type}. Must be 'model' or 'weapon'");
+                Server.PrintToConsole($"[zModelsCustom] Invalid type: {type}. Must be 'model', 'weapon', 'smoke', 'trail', or 'tracer'");
                 break;
         }
     }
@@ -562,6 +724,153 @@ public class zModelsCustom : BasePlugin
         }
     }
 
+    private async Task ProcessSmokeWebDelete(ulong steamId)
+    {
+        try
+        {
+            var targetPlayer = Utilities.GetPlayers()
+                .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+            await Database.RemovePlayerSmokeColorAsync(steamId);
+            SmokeManager.RemovePlayerSmokeColor(steamId);
+
+            Server.NextFrame(() =>
+            {
+                var prefix = Localizer["zModelsCustom.prefix"];
+
+                if (targetPlayer?.IsValid == true)
+                {
+                    targetPlayer.PrintToChat($" {prefix} {Localizer["zModelsCustom.web_smoke_removed"]}");
+                }
+
+                Server.PrintToConsole($"[zModelsCustom] Removed smoke color for player {steamId}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Server.NextFrame(() =>
+                Server.PrintToConsole($"[zModelsCustom] Error in smoke webdelete: {ex.Message}"));
+        }
+    }
+
+    private async Task ProcessTrailWebDelete(ulong steamId)
+    {
+        try
+        {
+            var targetPlayer = Utilities.GetPlayers()
+                .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+            await Database.RemovePlayerTrailAsync(steamId);
+            EffectsManager.RemovePlayerTrail(steamId);
+
+            Server.NextFrame(() =>
+            {
+                var prefix = Localizer["zModelsCustom.prefix"];
+                if (targetPlayer?.IsValid == true)
+                    targetPlayer.PrintToChat($" {prefix} Trail removed");
+                Server.PrintToConsole($"[zModelsCustom] Removed trail for player {steamId}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Server.NextFrame(() =>
+                Server.PrintToConsole($"[zModelsCustom] Error in trail webdelete: {ex.Message}"));
+        }
+    }
+
+    private async Task ProcessTracerWebDelete(ulong steamId)
+    {
+        try
+        {
+            var targetPlayer = Utilities.GetPlayers()
+                .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+            await Database.RemovePlayerTracerAsync(steamId);
+            EffectsManager.RemovePlayerTracer(steamId);
+
+            Server.NextFrame(() =>
+            {
+                var prefix = Localizer["zModelsCustom.prefix"];
+                if (targetPlayer?.IsValid == true)
+                    targetPlayer.PrintToChat($" {prefix} Tracer removed");
+                Server.PrintToConsole($"[zModelsCustom] Removed tracer for player {steamId}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Server.NextFrame(() =>
+                Server.PrintToConsole($"[zModelsCustom] Error in tracer webdelete: {ex.Message}"));
+        }
+    }
+
+    // css_webreload <steamid> - Reload specific player's weapons from DB (Console/Web only)
+    private void Command_WebReload(CCSPlayerController? player, CommandInfo info)
+    {
+        // Console only command
+        if (player != null)
+        {
+            if (player.IsValid)
+            {
+                player.PrintToChat(Localizer["zModelsCustom.prefix"] +
+                    Localizer["zModelsCustom.console_only"]);
+            }
+            return;
+        }
+
+        if (info.ArgCount < 2)
+        {
+            Server.PrintToConsole("[zModelsCustom] Usage: css_webreload <steamid>");
+            Server.PrintToConsole("[zModelsCustom] Reloads config and refreshes specific player's weapons from DB");
+            return;
+        }
+
+        var steamIdStr = info.GetArg(1);
+        if (!ulong.TryParse(steamIdStr, out var steamId))
+        {
+            Server.PrintToConsole($"[zModelsCustom] Invalid SteamID: {steamIdStr}");
+            return;
+        }
+
+        var targetPlayer = Utilities.GetPlayers()
+            .FirstOrDefault(p => p?.IsValid == true && p.SteamID == steamId);
+
+        if (targetPlayer == null)
+        {
+            Server.PrintToConsole($"[zModelsCustom] Player with SteamID {steamId} not found or not connected");
+            return;
+        }
+
+        try
+        {
+            // Reload configs first
+            var newPlayerModels = PlayerModelsConfig.Load(ModuleDirectory);
+            var newWeaponModels = WeaponModelsConfig.Load(ModuleDirectory);
+
+            ModelManager.PrecacheModels(newPlayerModels);
+            WeaponManager.PrecacheModels(newWeaponModels);
+            WeaponManager.UpdateModelsConfig(newWeaponModels);
+
+            // Clear player's cache and reload from DB
+            Database.ClearPlayerCache(steamId);
+            WeaponManager.ClearPlayerData(steamId);
+
+            // Reload player data from DB
+            _ = Database.PreloadAllPlayerDataAsync(steamId);
+
+            // Refresh player's weapons
+            WeaponManager.RefreshPlayerWeapons(targetPlayer);
+
+            var prefix = Localizer["zModelsCustom.prefix"];
+            targetPlayer.PrintToChat($" {prefix} {Localizer["zModelsCustom.web_reload_success"]}");
+
+            Server.PrintToConsole($"[zModelsCustom] Reloaded and refreshed player {targetPlayer.PlayerName} (SteamID: {steamId})");
+        }
+        catch (Exception ex)
+        {
+            Server.PrintToConsole($"[zModelsCustom] Error in webreload for {steamId}: {ex.Message}");
+        }
+    }
+
     private void Command_ModelsWebsite(CCSPlayerController? player, CommandInfo info)
     {
         if (player?.IsValid != true) return;
@@ -639,6 +948,9 @@ public class zModelsCustom : BasePlugin
         ModelManager.CleanupInspectEntities(steamId);
         Database.ClearPlayerCache(steamId);
         WeaponManager.ClearPlayerData(steamId);
+        SmokeManager.ClearPlayerData(steamId);
+        EffectsManager.ClearPlayerData(steamId);
+        EffectsManager.ClearPlayerSlot(player.Slot);
         _reloadTracking.TryRemove(steamId, out _);
 
         return HookResult.Continue;
@@ -660,25 +972,22 @@ public class zModelsCustom : BasePlugin
 // JSON models for web login
 public class WebLoginResponse
 {
-    [JsonPropertyName("success")]
+    [JsonPropertyName("sc")]
     public bool Success { get; set; }
 
-    [JsonPropertyName("info")]
+    [JsonPropertyName("i")]
     public WebLoginInfo? Info { get; set; }
 }
 
 public class WebLoginInfo
 {
-    [JsonPropertyName("country")]
+    [JsonPropertyName("ct")]
     public string Country { get; set; } = "";
 
-    [JsonPropertyName("city")]
+    [JsonPropertyName("cty")]
     public string City { get; set; } = "";
 
-    [JsonPropertyName("domain")]
-    public string Domain { get; set; } = "";
-
-    [JsonPropertyName("time")]
+    [JsonPropertyName("t")]
     public string Time { get; set; } = "";
 }
 

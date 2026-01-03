@@ -1,0 +1,181 @@
+{
+    "Weapons": {
+        "Zaomeng": {
+            "image": "zaomeng.png",
+            "name": "Zaomeng Skins",
+            "weapon_ak47": {
+                "AK-47 Zaomeng": {
+                    "name": "AK-47 Zaomeng",
+                    "uniqueid": "ak47_zaomeng_ag2",
+                    "model": "phase2/weapons/models/2en0w/ak47_zaomeng/ak47_zaomeng_ag2.vmdl",
+                    "image_gun": "ak47_zaomeng_ag2.png"
+                }
+            },
+            "weapon_awp": {
+                "AWP Zaomeng": {
+                    "name": "AWP Zaomeng",
+                    "uniqueid": "awp_zaomeng_ag2",
+                    "model": "phase2/weapons/models/2en0w/ak47_zaomeng/awp_zaomeng_ag2.vmdl",
+                    "image_gun": "awp_zaomeng_ag2.png"
+                }
+            },
+            "weapon_galilar": {
+                "Galil Zaomeng": {
+                    "name": "Galil Zaomeng",
+                    "uniqueid": "galil_zaomeng_ag2",
+                    "model": "phase2/weapons/models/2en0w/ak47_zaomeng/galil_zaomeng_ag2.vmdl",
+                    "image_gun": "galil_zaomeng_ag2.png"
+                }
+            },
+            "weapon_m4a1": {
+                "M4A1 Zaomeng": {
+                    "name": "M4A1 Zaomeng",
+                    "uniqueid": "m4a1_zaomeng_ag2",
+                    "model": "phase2/weapons/models/2en0w/ak47_zaomeng/m4a1_zaomeng_ag2.vmdl",
+                    "image_gun": "m4a1_zaomeng_ag2.png"
+                }
+            },
+            "weapon_usp": {
+                "USP Zaomeng": {
+                    "name": "USP Zaomeng",
+                    "uniqueid": "usp_zaomeng_ag2",
+                    "model": "phase2/weapons/models/2en0w/ak47_zaomeng/usp_zaomeng_ag2.vmdl",
+                    "image_gun": "usp_zaomeng_ag2.png"
+                }
+            },
+            "weapon_knife": {
+                "Knife Zaomeng": {
+                    "name": "Knife Zaomeng",
+                    "uniqueid": "re4knife_zaomeng_ag2",
+                    "model": "phase2/weapons/models/2en0w/re4knife_zaomeng/re4knife_zaomeng_ag2.vmdl",
+                    "image_gun": "knife_zaomeng_ag2.png"
+                }
+            }
+        },
+        "7ychu5": {
+            "image": "7ychu5.png",
+            "name": "7ychu5 Skins",
+            "weapon_ump": {
+                "ISO-45 Zhezhi": {
+                    "name": "ISO-45 Zhezhi",
+                    "uniqueid": "l4d2_codmw22_iso45_zhezhi",
+                    "model": "phase2/weapons/7ychu5/slot1/l4d2_codmw22_iso45_zhezhi/l4d2_codmw22_iso45_zhezhi.vmdl",
+                    "image_gun": "l4d2_codmw22_iso45_zhezhi.png"
+                },
+                "UMP-45 Karia": {
+                    "name": "UMP-45 Karia",
+                    "uniqueid": "l4d2_codmw22_ump45_karia",
+                    "model": "phase2/weapons/exg/10004/10004.vmdl",
+                    "image_gun": "l4d2_codmw22_ump45_karia.png"
+                }
+            },
+            "weapon_p90": {
+                "P90 Shorekeeper": {
+                    "name": "P90 Shorekeeper",
+                    "uniqueid": "l4d2_codmw22_p90_shorekeeper",
+                    "model": "phase2/weapons/7ychu5/slot1/l4d2_codmw22_p90_shorekeeper/l4d2_codmw22_p90_shorekeeper.vmdl",
+                    "image_gun": "l4d2_codmw22_p90_shorekeeper.png"
+                }
+            },
+            "weapon_aug": {
+                "RAM-7 Koharu": {
+                    "name": "RAM-7 Koharu",
+                    "uniqueid": "l4d2_codmw3_ram7_koharu",
+                    "model": "phase2/weapons/7ychu5/slot1/l4d2_codmw3_ram7_koharu/l4d2_codmw3_ram7_koharu.vmdl",
+                    "image_gun": "l4d2_codmw3_ram7_koharu.png"
+                }
+            },
+            "weapon_deagle": {
+                "x12 Sussorro": {
+                    "name": "x12 Sussorro",
+                    "uniqueid": "l4d2_codmw22_x12_sussorro_deagle",
+                    "model": "phase2/weapons/7ychu5/slot2/l4d2_codmw22_x12_sussorro/l4d2_codmw22_x12_sussorro_deagle.vmdl",
+                    "image_gun": "l4d2_codmw22_x12_sussorro_deagle.png"
+                }
+            },
+            "weapon_ak47": {
+                "AK-47 Plana": {
+                    "name": "AK-47 Plana",
+                    "uniqueid": "ak47_plana",
+                    "model": "phase2/weapons/exg/10000/10000.vmdl",
+                    "image_gun": "ak47_plana.png"
+                },
+                "AK-47 Reisa": {
+                    "name": "AK-47 Reisa",
+                    "uniqueid": "ak47_reisa",
+                    "model": "phase2/weapons/exg/10006/10006.vmdl",
+                    "image_gun": "ak47_reisa.png"
+                },
+                "AK-47 Karia": {
+                    "name": "ra_miku",
+                    "model": "phase2/weapons/exg/10005/10005.vmdl",
+                    "image_gun": "ak47_sakura_miku.png"
+                }
+            },
+            "weapon_mac10": {
+                "MAC-10 Miku": {
+                    "name": "MAC-10 Miku",
+                    "uniqueid": "mac10_miku",
+                    "model": "phase2/weapons/exg/10001/10001.vmdl",
+                    "image_gun": "mac10_miku.png"
+                }
+            },
+            "weapon_mp9": {
+                "MP9 Raccoon": {
+                    "name": "Glock-19 Airi",
+                    "uniqueid": "glock19_airi",
+                    "model": "phase2/weapons/exg/10002/10002.vmdl",
+                    "image_gun": "glock19_airi.png"
+                },
+                "MP9 Miyako": {
+                    "name": "MP9 Miyako",
+                    "uniqueid": "mp9_miyako",
+                    "model": "phase2/weapons/exg/10004/10004.vmdl",
+                    "image_gun": "mp9_miyako.png"
+                }
+            },
+            "weapon_m4a1_silencer": {
+                "M4A1-S Aqua Minato": {
+                    "name": "M4A1-S Aqua Minato",
+                    "uniqueid": "m4a1s_aqua_minato",
+                    "model": "phase2/weapons/exg/10007/10007.vmdl",
+                    "image_gun": "m4a1s_aqua_minato.png"
+                },
+                "M4A1-S Mika": {
+                    "name": "M4A1-S Mika",
+                    "uniqueid": "m4a1s_mika",
+                    "model": "phase2/weapons/exg/10011/10011.vmdl",
+                    "image_gun": "m4a1s_mika.png"
+                }
+            },
+            "weapon_knife": {
+                "Kunai 01": {
+                    "name": "Kunai 01",
+                    "uniqueid": "kunai_01",
+                    "model": "phase2/weapons/exg/10008/10008.vmdl",
+                    "image_gun": "kunai_01.png"
+                },
+                "Kunai 02": {
+                    "name": "Kunai 02",
+                    "uniqueid": "kunai_02",
+                    "model": "phase2/weapons/exg/10009/10009.vmdl",
+                    "image_gun": "kunai_02.png"
+                },
+                "Kunai 03": {
+                    "name": "Kunai 03",
+                    "uniqueid": "kunai_03",
+                    "model": "phase2/weapons/exg/10010/10010.vmdl",
+                    "image_gun": "kunai_03.png"
+                }
+            },
+            "weapon_m4a1": {
+                "M4A4 Rabbit": {
+                    "name": "M4A4 Rabbit",
+                    "uniqueid": "m4a4_rabbit",
+                    "model": "phase2/weapons/exg/10013/10013.vmdl",
+                    "image_gun": "m4a4_rabbit.png"
+                }
+            }
+        }
+    }
+}

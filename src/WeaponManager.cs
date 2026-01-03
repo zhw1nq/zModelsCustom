@@ -8,6 +8,7 @@ public class WeaponManager
 {
     private WeaponModelsConfig _modelsConfig = new();
     private readonly ConcurrentDictionary<ulong, Dictionary<string, string>> _playerWeapons = new();
+    private static readonly Dictionary<nint, string> OldSubclassByHandle = new();
 
     public WeaponManager()
     {
@@ -21,96 +22,76 @@ public class WeaponManager
 
     public void PrecacheModels(WeaponModelsConfig models)
     {
-        foreach (var weapon in models.Weapons.Values)
-        {
-            foreach (var model in weapon.Values)
-            {
-                if (!string.IsNullOrEmpty(model.Model))
-                {
-                    Server.PrecacheModel(model.Model);
-                }
-            }
-        }
+        // No precaching needed for subclass-based weapon changes
+        // Subclasses are already defined in game files
     }
 
     public void OnEntityCreated(CEntityInstance entity)
     {
         if (!entity.DesignerName.StartsWith("weapon_"))
-        {
             return;
-        }
 
-        CBasePlayerWeapon weapon = entity.As<CBasePlayerWeapon>();
-        SetWeaponModel(weapon, false);
+        Server.NextWorldUpdate(() =>
+        {
+            CBasePlayerWeapon? weapon = entity.As<CBasePlayerWeapon>();
+            if (weapon?.IsValid != true || weapon.OriginalOwnerXuidLow <= 0)
+                return;
+
+            CCSPlayerController? player = FindPlayerFromWeapon(weapon);
+            if (player == null || !player.IsValid || player.IsBot)
+                return;
+
+            ApplyPlayerWeaponSubclass(player, weapon);
+        });
     }
 
     public HookResult OnItemEquip(EventItemEquip @event, GameEventInfo info)
     {
         CCSPlayerController? player = @event.Userid;
-
-        if (player == null || !player.IsValid)
+        if (player == null || !player.IsValid || player.IsBot)
             return HookResult.Continue;
 
-        CBasePlayerWeapon? weapon = player.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value;
+        CBasePlayerWeapon? activeWeapon = player.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value;
+        if (activeWeapon?.IsValid != true)
+            return HookResult.Continue;
 
-        if (weapon != null)
-        {
-            SetWeaponModel(weapon, true);
-        }
+        ApplyPlayerWeaponSubclass(player, activeWeapon);
 
         return HookResult.Continue;
     }
 
-    public void SetWeaponModel(CBasePlayerWeapon? weapon, bool isUpdate, bool reset = false)
+    private void ApplyPlayerWeaponSubclass(CCSPlayerController player, CBasePlayerWeapon weapon)
     {
-        Server.NextWorldUpdate(() =>
+        var steamId = player.SteamID;
+        var weaponDesignerName = GetDesignerName(weapon);
+
+        // Check cache first
+        if (_playerWeapons.TryGetValue(steamId, out var weapons) &&
+            weapons.TryGetValue(weaponDesignerName, out var modelId))
         {
-            if (weapon == null || !weapon.IsValid || weapon.OwnerEntity.Value == null || weapon.OwnerEntity.Index <= 0)
-                return;
-
-            CCSPlayerPawn? pawn = weapon.OwnerEntity.Value?.As<CCSPlayerPawn>();
-
-            if (pawn == null || !pawn.IsValid)
-                return;
-
-            CCSPlayerController? player = pawn.OriginalController.Value;
-            if (player == null || !player.IsValid || player.IsBot)
-                return;
-
-            var steamId = player.SteamID;
-            var weaponName = GetNormalizedWeaponName(weapon);
-
-            // Try to get model from cache or database
-            WeaponModelData? modelData = null;
-
-            if (!reset)
+            var modelData = _modelsConfig.FindModelByUniqueId(modelId);
+            if (modelData != null)
             {
-                // Check player weapon cache first
-                if (_playerWeapons.TryGetValue(steamId, out var weapons) && 
-                    weapons.TryGetValue(weaponName, out var modelId))
+                var subclass = modelData.GetSubclassName();
+                if (!string.IsNullOrEmpty(subclass) && weaponDesignerName.Equals(modelData.WeaponType, StringComparison.Ordinal))
                 {
-                    modelData = _modelsConfig.FindModelByUniqueId(modelId);
-                }
-                else
-                {
-                    // Load from database async
-                    _ = LoadAndApplyWeaponModelAsync(steamId, weapon, weaponName);
-                    return;
+                    SetSubclass(weapon, weaponDesignerName, subclass);
                 }
             }
-
-            ApplyWeaponModelInternal(weapon, modelData, isUpdate, reset);
-        });
+        }
+        else
+        {
+            // Load from database async
+            _ = LoadAndApplyWeaponSubclassAsync(steamId, player, weapon, weaponDesignerName);
+        }
     }
 
-    private async Task LoadAndApplyWeaponModelAsync(ulong steamId, CBasePlayerWeapon weapon, string weaponName)
+    private async Task LoadAndApplyWeaponSubclassAsync(ulong steamId, CCSPlayerController player, CBasePlayerWeapon weapon, string weaponName)
     {
         var modelId = await zModelsCustom.Database.GetPlayerWeaponAsync(steamId, weaponName);
 
         if (modelId == null)
-        {
             return;
-        }
 
         // Cache the result
         var weapons = _playerWeapons.GetOrAdd(steamId, _ => new Dictionary<string, string>());
@@ -119,57 +100,25 @@ public class WeaponManager
         var modelData = _modelsConfig.FindModelByUniqueId(modelId);
         if (modelData == null)
         {
+            // Model no longer exists in config, remove from database
+            await zModelsCustom.Database.RemovePlayerWeaponAsync(steamId, weaponName);
             return;
         }
 
+        var subclass = modelData.GetSubclassName();
+        if (string.IsNullOrEmpty(subclass))
+            return;
+
+        if (!weaponName.Equals(modelData.WeaponType, StringComparison.Ordinal))
+            return;
+
         Server.NextFrame(() =>
         {
-            if (weapon != null && weapon.IsValid)
+            if (player.IsValid && weapon?.IsValid == true)
             {
-                ApplyWeaponModelInternal(weapon, modelData, true, false);
+                SetSubclass(weapon, weaponName, subclass);
             }
         });
-    }
-
-    private static void ApplyWeaponModelInternal(CBasePlayerWeapon weapon, WeaponModelData? modelData, bool isUpdate, bool reset)
-    {
-        if (reset || modelData == null)
-        {
-            // Reset to original model
-            if (!string.IsNullOrEmpty(weapon.Globalname))
-            {
-                string[] globalnameData = weapon.Globalname.Split(',');
-                weapon.Globalname = string.Empty;
-                
-                if (globalnameData.Length >= 1 && !string.IsNullOrEmpty(globalnameData[0]))
-                {
-                    weapon.CBodyComponent!.SceneNode!.GetSkeletonInstance().ModelState.ModelName = globalnameData[0];
-                    weapon.SetModel(globalnameData[0]);
-                }
-                
-                if (globalnameData.Length >= 2)
-                {
-                    weapon.AttributeManager.Item.CustomName = globalnameData[1];
-                }
-            }
-        }
-        else
-        {
-            // Save original model info if not already saved
-            if (!isUpdate && string.IsNullOrEmpty(weapon.Globalname))
-            {
-                weapon.Globalname = $"{weapon.CBodyComponent!.SceneNode!.GetSkeletonInstance().ModelState.ModelName},{weapon.AttributeManager.Item.CustomName}";
-            }
-
-            // Apply custom model
-            weapon.CBodyComponent!.SceneNode!.GetSkeletonInstance().ModelState.ModelName = modelData.Model;
-            weapon.SetModel(modelData.Model);
-
-            if (!string.IsNullOrEmpty(modelData.CustomName))
-            {
-                weapon.AttributeManager.Item.CustomName = modelData.CustomName;
-            }
-        }
     }
 
     public void RefreshPlayerWeapons(CCSPlayerController player)
@@ -178,9 +127,9 @@ public class WeaponManager
             return;
 
         var activeWeapon = player.PlayerPawn.Value.WeaponServices.ActiveWeapon.Value;
-        if (activeWeapon != null)
+        if (activeWeapon?.IsValid == true)
         {
-            SetWeaponModel(activeWeapon, true);
+            ApplyPlayerWeaponSubclass(player, activeWeapon);
         }
     }
 
@@ -192,7 +141,7 @@ public class WeaponManager
     public void UpdatePlayerWeaponCache(ulong steamId, string weaponName, string? modelId)
     {
         var weapons = _playerWeapons.GetOrAdd(steamId, _ => new Dictionary<string, string>());
-        
+
         if (modelId == null)
         {
             weapons.Remove(weaponName);
@@ -203,7 +152,9 @@ public class WeaponManager
         }
     }
 
-    private static string GetNormalizedWeaponName(CBasePlayerWeapon weapon)
+    #region Weapon Helpers
+
+    public static string GetDesignerName(CBasePlayerWeapon weapon)
     {
         string weaponDesignerName = weapon.DesignerName;
         ushort weaponIndex = weapon.AttributeManager.Item.ItemDefinitionIndex;
@@ -211,10 +162,115 @@ public class WeaponManager
         return (weaponDesignerName, weaponIndex) switch
         {
             var (name, _) when name.Contains("bayonet") => "weapon_knife",
+            ("weapon_deagle", 64) => "weapon_revolver",
             ("weapon_m4a1", 60) => "weapon_m4a1_silencer",
             ("weapon_hkp2000", 61) => "weapon_usp_silencer",
             ("weapon_mp7", 23) => "weapon_mp5sd",
             _ => weaponDesignerName
         };
     }
+
+    public static void SetSubclass(CBasePlayerWeapon weapon, string oldSubclass, string newSubclass)
+    {
+        if (string.IsNullOrEmpty(newSubclass))
+            return;
+
+        var handle = weapon.Handle;
+        OldSubclassByHandle[handle] = oldSubclass;
+        weapon.AcceptInput("ChangeSubclass", weapon, weapon, newSubclass);
+    }
+
+    public static void ResetSubclass(CBasePlayerWeapon weapon)
+    {
+        var handle = weapon.Handle;
+        if (!OldSubclassByHandle.TryGetValue(handle, out string? oldSubclass) || string.IsNullOrEmpty(oldSubclass))
+            return;
+
+        weapon.AcceptInput("ChangeSubclass", weapon, weapon, oldSubclass);
+        OldSubclassByHandle.Remove(handle);
+    }
+
+    private static CCSPlayerController? FindPlayerFromWeapon(CBasePlayerWeapon weapon)
+    {
+        if (weapon.OwnerEntity.Value == null)
+            return null;
+
+        CCSPlayerPawn? pawn = weapon.OwnerEntity.Value.As<CCSPlayerPawn>();
+        return pawn?.OriginalController.Value;
+    }
+
+    #endregion
+
+    #region Equip/Unequip
+
+    public bool HandleEquip(CCSPlayerController player, WeaponModelData item, bool isEquip)
+    {
+        if (!player.PawnIsAlive)
+            return true;
+
+        var subclass = item.GetSubclassName();
+        if (string.IsNullOrEmpty(subclass) || string.IsNullOrEmpty(item.WeaponType))
+            return true;
+
+        CBasePlayerWeapon? weapon = GetPlayerWeapon(player, item.WeaponType);
+        if (weapon != null)
+        {
+            if (isEquip)
+            {
+                SetSubclass(weapon, item.WeaponType, subclass);
+            }
+            else
+            {
+                ResetSubclass(weapon);
+            }
+        }
+
+        return true;
+    }
+
+    private static CBasePlayerWeapon? GetPlayerWeapon(CCSPlayerController player, string weaponName)
+    {
+        CPlayer_WeaponServices? weaponServices = player.PlayerPawn?.Value?.WeaponServices;
+        if (weaponServices == null)
+            return null;
+
+        CBasePlayerWeapon? activeWeapon = weaponServices.ActiveWeapon?.Value;
+        if (activeWeapon != null && GetDesignerName(activeWeapon) == weaponName)
+            return activeWeapon;
+
+        return weaponServices.MyWeapons.FirstOrDefault(p => p.Value != null && GetDesignerName(p.Value) == weaponName)?.Value;
+    }
+
+    #endregion
+
+    #region Inspect
+
+    public void Inspect(CCSPlayerController player, WeaponModelData modelData)
+    {
+        if (player.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value is not CBasePlayerWeapon activeWeapon)
+            return;
+
+        var subclass = modelData.GetSubclassName();
+        if (string.IsNullOrEmpty(subclass) || string.IsNullOrEmpty(modelData.WeaponType))
+            return;
+
+        if (GetDesignerName(activeWeapon) != modelData.WeaponType)
+        {
+            player.PrintToChat($"You need to equip {modelData.WeaponType} first!");
+            return;
+        }
+
+        SetSubclass(activeWeapon, modelData.WeaponType, subclass);
+
+        // Reset after 3 seconds
+        zModelsCustom.Instance.AddTimer(3.0f, () =>
+        {
+            if (player.IsValid && player.PlayerPawn.Value?.WeaponServices?.ActiveWeapon.Value == activeWeapon)
+            {
+                ResetSubclass(activeWeapon);
+            }
+        });
+    }
+
+    #endregion
 }

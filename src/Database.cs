@@ -11,19 +11,10 @@ public class Database : IDisposable
     private readonly string _connectionString;
     private readonly ConcurrentDictionary<(ulong, CsTeam), string> _modelCache = new();
     private readonly ConcurrentDictionary<(ulong, string), string> _weaponCache = new();
+    private readonly ConcurrentDictionary<ulong, string> _smokeCache = new();
+    private readonly ConcurrentDictionary<ulong, string> _trailCache = new();
+    private readonly ConcurrentDictionary<ulong, string> _tracerCache = new();
     private bool _disposed;
-
-    // Common weapon types for table creation
-    private static readonly string[] WeaponColumns = new[]
-    {
-        "weapon_ak47", "weapon_m4a1", "weapon_m4a1_silencer", "weapon_awp", "weapon_ssg08",
-        "weapon_famas", "weapon_aug", "weapon_galilar", "weapon_sg556", "weapon_scar20", "weapon_g3sg1",
-        "weapon_mp9", "weapon_mp7", "weapon_mp5sd", "weapon_ump45", "weapon_p90", "weapon_bizon", "weapon_mac10",
-        "weapon_usp_silencer", "weapon_hkp2000", "weapon_glock", "weapon_elite", "weapon_p250",
-        "weapon_fiveseven", "weapon_cz75a", "weapon_tec9", "weapon_revolver", "weapon_deagle",
-        "weapon_nova", "weapon_xm1014", "weapon_mag7", "weapon_sawedoff", "weapon_m249", "weapon_negev",
-        "weapon_knife", "weapon_taser"
-    };
 
     public Database(DatabaseConfig config)
     {
@@ -53,19 +44,50 @@ public class Database : IDisposable
 
         await cmd1.ExecuteNonQueryAsync();
 
-        // Create weapon models table
-        var columnDefs = string.Join(",\n                ", 
-            WeaponColumns.Select(w => $"`{w}` VARCHAR(64) DEFAULT NULL"));
-
-        await using var cmd2 = new MySqlCommand($@"
-            CREATE TABLE IF NOT EXISTS zCustomWeapons (
-                steamid BIGINT UNSIGNED PRIMARY KEY,
-                {columnDefs},
+        // Create normalized weapon equipments table (new structure)
+        await using var cmd2 = new MySqlCommand(@"
+            CREATE TABLE IF NOT EXISTS zWeaponEquipments (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                steamid BIGINT UNSIGNED NOT NULL,
+                weapon_type VARCHAR(32) NOT NULL,
+                uniqueid VARCHAR(64) NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_player_weapon (steamid, weapon_type),
                 INDEX idx_steamid (steamid)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4", conn);
 
         await cmd2.ExecuteNonQueryAsync();
+
+        // Create smoke colors table
+        await using var cmd3 = new MySqlCommand(@"
+            CREATE TABLE IF NOT EXISTS zSmokeColors (
+                steamid BIGINT UNSIGNED PRIMARY KEY,
+                color VARCHAR(32) NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_steamid (steamid)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4", conn);
+
+        await cmd3.ExecuteNonQueryAsync();
+
+        // Create trails table
+        await using var cmd4 = new MySqlCommand(@"
+            CREATE TABLE IF NOT EXISTS zTrails (
+                steamid BIGINT UNSIGNED PRIMARY KEY,
+                uniqueid VARCHAR(64) NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4", conn);
+
+        await cmd4.ExecuteNonQueryAsync();
+
+        // Create tracers table
+        await using var cmd5 = new MySqlCommand(@"
+            CREATE TABLE IF NOT EXISTS zTracers (
+                steamid BIGINT UNSIGNED PRIMARY KEY,
+                uniqueid VARCHAR(64) NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4", conn);
+
+        await cmd5.ExecuteNonQueryAsync();
     }
 
     #region Player Models
@@ -150,30 +172,28 @@ public class Database : IDisposable
 
     #endregion
 
-    #region Weapon Models
+    #region Weapon Equipments (Normalized)
 
-    public async Task<string?> GetPlayerWeaponAsync(ulong steamId, string weaponName)
+    public async Task<string?> GetPlayerWeaponAsync(ulong steamId, string weaponType)
     {
-        if (_weaponCache.TryGetValue((steamId, weaponName), out var cached))
+        if (_weaponCache.TryGetValue((steamId, weaponType), out var cached))
             return cached;
 
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        var safeWeaponName = SanitizeColumnName(weaponName);
-        if (safeWeaponName == null) return null;
-
         await using var cmd = new MySqlCommand(
-            $"SELECT `{safeWeaponName}` FROM zCustomWeapons WHERE steamid = @steamid LIMIT 1",
+            "SELECT uniqueid FROM zWeaponEquipments WHERE steamid = @steamid AND weapon_type = @weapon_type LIMIT 1",
             conn);
 
         cmd.Parameters.AddWithValue("@steamid", steamId);
+        cmd.Parameters.AddWithValue("@weapon_type", weaponType);
 
         var result = await cmd.ExecuteScalarAsync();
-        if (result is string modelId && !string.IsNullOrEmpty(modelId))
+        if (result is string uniqueId && !string.IsNullOrEmpty(uniqueId))
         {
-            _weaponCache.TryAdd((steamId, weaponName), modelId);
-            return modelId;
+            _weaponCache.TryAdd((steamId, weaponType), uniqueId);
+            return uniqueId;
         }
 
         return null;
@@ -187,86 +207,73 @@ public class Database : IDisposable
         await conn.OpenAsync();
 
         await using var cmd = new MySqlCommand(
-            "SELECT * FROM zCustomWeapons WHERE steamid = @steamid LIMIT 1",
+            "SELECT weapon_type, uniqueid FROM zWeaponEquipments WHERE steamid = @steamid",
             conn);
 
         cmd.Parameters.AddWithValue("@steamid", steamId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        while (await reader.ReadAsync())
         {
-            for (int i = 0; i < reader.FieldCount; i++)
-            {
-                var columnName = reader.GetName(i);
-                if (columnName.StartsWith("weapon_") && !reader.IsDBNull(i))
-                {
-                    var value = reader.GetString(i);
-                    if (!string.IsNullOrEmpty(value))
-                    {
-                        weapons[columnName] = value;
-                        _weaponCache[(steamId, columnName)] = value;
-                    }
-                }
-            }
+            var weaponType = reader.GetString(0);
+            var uniqueId = reader.GetString(1);
+            weapons[weaponType] = uniqueId;
+            _weaponCache[(steamId, weaponType)] = uniqueId;
         }
 
         return weapons;
     }
 
-    public async Task SavePlayerWeaponAsync(ulong steamId, string weaponName, string modelId)
+    public async Task SavePlayerWeaponAsync(ulong steamId, string weaponType, string uniqueId)
     {
-        _weaponCache[(steamId, weaponName)] = modelId;
-
-        var safeWeaponName = SanitizeColumnName(weaponName);
-        if (safeWeaponName == null) return;
+        _weaponCache[(steamId, weaponType)] = uniqueId;
 
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        await using var cmd = new MySqlCommand($@"
-            INSERT INTO zCustomWeapons (steamid, `{safeWeaponName}`) 
-            VALUES (@steamid, @model_id)
-            ON DUPLICATE KEY UPDATE `{safeWeaponName}` = @model_id", conn);
+        await using var cmd = new MySqlCommand(@"
+            INSERT INTO zWeaponEquipments (steamid, weapon_type, uniqueid) 
+            VALUES (@steamid, @weapon_type, @uniqueid)
+            ON DUPLICATE KEY UPDATE uniqueid = @uniqueid", conn);
 
         cmd.Parameters.AddWithValue("@steamid", steamId);
-        cmd.Parameters.AddWithValue("@model_id", modelId);
+        cmd.Parameters.AddWithValue("@weapon_type", weaponType);
+        cmd.Parameters.AddWithValue("@uniqueid", uniqueId);
 
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task RemovePlayerWeaponAsync(ulong steamId, string weaponName)
+    public async Task RemovePlayerWeaponAsync(ulong steamId, string weaponType)
     {
-        _weaponCache.TryRemove((steamId, weaponName), out _);
-
-        var safeWeaponName = SanitizeColumnName(weaponName);
-        if (safeWeaponName == null) return;
+        _weaponCache.TryRemove((steamId, weaponType), out _);
 
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
         await using var cmd = new MySqlCommand(
-            $"UPDATE zCustomWeapons SET `{safeWeaponName}` = NULL WHERE steamid = @steamid",
+            "DELETE FROM zWeaponEquipments WHERE steamid = @steamid AND weapon_type = @weapon_type",
             conn);
 
         cmd.Parameters.AddWithValue("@steamid", steamId);
+        cmd.Parameters.AddWithValue("@weapon_type", weaponType);
 
         await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task RemoveAllPlayerWeaponsAsync(ulong steamId)
     {
-        foreach (var weapon in WeaponColumns)
+        // Clear all weapon cache for this player
+        var keysToRemove = _weaponCache.Keys.Where(k => k.Item1 == steamId).ToList();
+        foreach (var key in keysToRemove)
         {
-            _weaponCache.TryRemove((steamId, weapon), out _);
+            _weaponCache.TryRemove(key, out _);
         }
 
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        var setNulls = string.Join(", ", WeaponColumns.Select(w => $"`{w}` = NULL"));
-
         await using var cmd = new MySqlCommand(
-            $"UPDATE zCustomWeapons SET {setNulls} WHERE steamid = @steamid",
+            "DELETE FROM zWeaponEquipments WHERE steamid = @steamid",
             conn);
 
         cmd.Parameters.AddWithValue("@steamid", steamId);
@@ -279,13 +286,61 @@ public class Database : IDisposable
         await GetAllPlayerWeaponsAsync(steamId);
     }
 
-    private async Task EnsurePlayerExistsAsync(ulong steamId)
+    #endregion
+
+    #region Smoke Colors
+
+    public async Task<string?> GetPlayerSmokeColorAsync(ulong steamId)
     {
+        if (_smokeCache.TryGetValue(steamId, out var cached))
+            return cached;
+
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
         await using var cmd = new MySqlCommand(
-            "INSERT IGNORE INTO zCustomWeapons (steamid) VALUES (@steamid)",
+            "SELECT color FROM zSmokeColors WHERE steamid = @steamid LIMIT 1",
+            conn);
+
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+
+        var result = await cmd.ExecuteScalarAsync();
+        if (result is string color && !string.IsNullOrEmpty(color))
+        {
+            _smokeCache.TryAdd(steamId, color);
+            return color;
+        }
+
+        return null;
+    }
+
+    public async Task SavePlayerSmokeColorAsync(ulong steamId, string color)
+    {
+        _smokeCache[steamId] = color;
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(@"
+            INSERT INTO zSmokeColors (steamid, color) 
+            VALUES (@steamid, @color)
+            ON DUPLICATE KEY UPDATE color = @color", conn);
+
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+        cmd.Parameters.AddWithValue("@color", color);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemovePlayerSmokeColorAsync(ulong steamId)
+    {
+        _smokeCache.TryRemove(steamId, out _);
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(
+            "DELETE FROM zSmokeColors WHERE steamid = @steamid",
             conn);
 
         cmd.Parameters.AddWithValue("@steamid", steamId);
@@ -293,11 +348,124 @@ public class Database : IDisposable
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static string? SanitizeColumnName(string weaponName)
+    private async Task PreloadPlayerSmokeColorAsync(ulong steamId)
     {
-        var normalized = weaponName.ToLowerInvariant();
-        return WeaponColumns.Contains(normalized) ? normalized : null;
+        await GetPlayerSmokeColorAsync(steamId);
     }
+
+    #endregion
+
+    #region Trails
+
+    public async Task<string?> GetPlayerTrailAsync(ulong steamId)
+    {
+        if (_trailCache.TryGetValue(steamId, out var cached))
+            return cached;
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(
+            "SELECT uniqueid FROM zTrails WHERE steamid = @steamid LIMIT 1", conn);
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+
+        var result = await cmd.ExecuteScalarAsync();
+        if (result is string uniqueId && !string.IsNullOrEmpty(uniqueId))
+        {
+            _trailCache.TryAdd(steamId, uniqueId);
+            return uniqueId;
+        }
+        return null;
+    }
+
+    public async Task SavePlayerTrailAsync(ulong steamId, string uniqueId)
+    {
+        _trailCache[steamId] = uniqueId;
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(@"
+            INSERT INTO zTrails (steamid, uniqueid) VALUES (@steamid, @uniqueid)
+            ON DUPLICATE KEY UPDATE uniqueid = @uniqueid", conn);
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+        cmd.Parameters.AddWithValue("@uniqueid", uniqueId);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemovePlayerTrailAsync(ulong steamId)
+    {
+        _trailCache.TryRemove(steamId, out _);
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(
+            "DELETE FROM zTrails WHERE steamid = @steamid", conn);
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task PreloadPlayerTrailAsync(ulong steamId) => await GetPlayerTrailAsync(steamId);
+
+    #endregion
+
+    #region Tracers
+
+    public async Task<string?> GetPlayerTracerAsync(ulong steamId)
+    {
+        if (_tracerCache.TryGetValue(steamId, out var cached))
+            return cached;
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(
+            "SELECT uniqueid FROM zTracers WHERE steamid = @steamid LIMIT 1", conn);
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+
+        var result = await cmd.ExecuteScalarAsync();
+        if (result is string uniqueId && !string.IsNullOrEmpty(uniqueId))
+        {
+            _tracerCache.TryAdd(steamId, uniqueId);
+            return uniqueId;
+        }
+        return null;
+    }
+
+    public async Task SavePlayerTracerAsync(ulong steamId, string uniqueId)
+    {
+        _tracerCache[steamId] = uniqueId;
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(@"
+            INSERT INTO zTracers (steamid, uniqueid) VALUES (@steamid, @uniqueid)
+            ON DUPLICATE KEY UPDATE uniqueid = @uniqueid", conn);
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+        cmd.Parameters.AddWithValue("@uniqueid", uniqueId);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task RemovePlayerTracerAsync(ulong steamId)
+    {
+        _tracerCache.TryRemove(steamId, out _);
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        await using var cmd = new MySqlCommand(
+            "DELETE FROM zTracers WHERE steamid = @steamid", conn);
+        cmd.Parameters.AddWithValue("@steamid", steamId);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task PreloadPlayerTracerAsync(ulong steamId) => await GetPlayerTracerAsync(steamId);
 
     #endregion
 
@@ -309,19 +477,31 @@ public class Database : IDisposable
         _modelCache.TryRemove((steamId, CsTeam.Terrorist), out _);
         _modelCache.TryRemove((steamId, CsTeam.CounterTerrorist), out _);
 
-        // Clear weapon cache
-        foreach (var weapon in WeaponColumns)
+        // Clear weapon cache - find all keys for this player
+        var keysToRemove = _weaponCache.Keys.Where(k => k.Item1 == steamId).ToList();
+        foreach (var key in keysToRemove)
         {
-            _weaponCache.TryRemove((steamId, weapon), out _);
+            _weaponCache.TryRemove(key, out _);
         }
+
+        // Clear smoke cache
+        _smokeCache.TryRemove(steamId, out _);
+        
+        // Clear trail/tracer cache
+        _trailCache.TryRemove(steamId, out _);
+        _tracerCache.TryRemove(steamId, out _);
     }
 
     public async Task PreloadAllPlayerDataAsync(ulong steamId)
     {
-        await EnsurePlayerExistsAsync(steamId);
+        // Don't create row here - row is only created when saving data
+        // This prevents empty rows for players who never save any skin
         await Task.WhenAll(
             PreloadPlayerModelsAsync(steamId),
-            PreloadPlayerWeaponsAsync(steamId)
+            PreloadPlayerWeaponsAsync(steamId),
+            PreloadPlayerSmokeColorAsync(steamId),
+            PreloadPlayerTrailAsync(steamId),
+            PreloadPlayerTracerAsync(steamId)
         );
     }
 
@@ -341,6 +521,9 @@ public class Database : IDisposable
 
         _modelCache.Clear();
         _weaponCache.Clear();
+        _smokeCache.Clear();
+        _trailCache.Clear();
+        _tracerCache.Clear();
         MySqlConnection.ClearAllPools();
 
         _disposed = true;
